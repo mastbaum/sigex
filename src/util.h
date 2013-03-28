@@ -1,3 +1,6 @@
+#ifndef __UTIL_H__
+#define __UTIL_H__
+
 // Various utilities
 #include <vector>
 #include <string>
@@ -53,7 +56,7 @@ enum class FitMode {
 // loads and parses a json config file
 class FitConfig {
   public:
-    FitConfig(const std::string filename);
+    FitConfig(std::string const filename);
     virtual ~FitConfig() {}
 
     // pretty-print the fit parameters
@@ -70,9 +73,11 @@ class FitConfig {
 
   protected:
     // load an energy/radius ROOT TH2F from a file
-    static TH2F* load_histogram(const std::string filename, const std::string objname);
+    static TH2F* load_histogram(std::string const filename, std::string const objname);
 
     // project a TH2F down to an energy-only TH1F, optionally cutting on radius
-    static TH1D* project1d(const TH2F* hist2d, const Range<float>* r_range=nullptr);
+    static TH1D* project1d(TH2F* const hist2d, Range<float>* const r_range=nullptr);
 };
+
+#endif  // __UTIL_H__
 

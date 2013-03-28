@@ -12,7 +12,7 @@
 } while (0)
 
 
-// compute the log likelihood given signal rates and normalizations and a
+// compute the log likelihood given signal rates and normalizations
 __global__ void ll(const float* lut, const float* n, const double* pars, const size_t ne, const size_t ns, double* sums) {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   for (int i=idx; i<(int)ne; i+=gridDim.x*blockDim.x) {
@@ -25,17 +25,25 @@ __global__ void ll(const float* lut, const float* n, const double* pars, const s
 }
 
 
-GPULL::GPULL(const float* norms, const float* lut, const size_t _nsignals, const size_t _nevents) : nsignals(_nsignals), nevents(_nevents) {
+GPULL::GPULL(const float* lut, const size_t _nsignals, const size_t _nevents)
+  : nsignals(_nsignals), nevents(_nevents), norms_device_alloc(false) {
   CUDA_CHECK_ERROR(cudaMalloc(&this->lut_device, this->nevents * this->nsignals * sizeof(float)));
   CUDA_CHECK_ERROR(cudaMemcpy(this->lut_device, lut, this->nevents * this->nsignals * sizeof(float), cudaMemcpyHostToDevice));
-  CUDA_CHECK_ERROR(cudaMalloc(&this->norms_device, this->nsignals * sizeof(float)));
-  CUDA_CHECK_ERROR(cudaMemcpy(this->norms_device, norms, this->nsignals * sizeof(float), cudaMemcpyHostToDevice));
 }
 
 
 GPULL::~GPULL() {
   CUDA_CHECK_ERROR(cudaFree(this->norms_device));
   CUDA_CHECK_ERROR(cudaFree(this->lut_device));
+}
+
+
+void GPULL::set_norms(const float* norms, const size_t _nsignals) {
+  if (!this->norms_device_alloc) {
+    CUDA_CHECK_ERROR(cudaMalloc(&this->norms_device, this->nsignals * sizeof(float)));
+    this->norms_device_alloc = true;
+  }
+  CUDA_CHECK_ERROR(cudaMemcpy(this->norms_device, norms, this->nsignals * sizeof(float), cudaMemcpyHostToDevice));
 }
 
 

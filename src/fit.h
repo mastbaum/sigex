@@ -1,3 +1,6 @@
+#ifndef __FIT_H__
+#define __FIT_H__
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -7,13 +10,15 @@
 #include <TFile.h>
 #include <TTree.h>
 #include <TMinuit.h>
+#include "ll.h"
 
 class TMinuit;
-class GPULL;
+
 
 // a concatenation of ntuples
 class Dataset {
   public:
+    // construct using ntuple files on disk
     Dataset(std::string _name, std::vector<std::string> filenames) : name(_name) {
       TChain* _events = new TChain("tev");
       this->events = dynamic_cast<TTree*>(_events);
@@ -30,6 +35,7 @@ class Dataset {
       std::cout << "Dataset " << this->name << ": " << this->nevents << " events" << std::endl;
     }
 
+    // construct using a ttree in memory
     Dataset(std::string _name, TTree* _events) : name(_name), events(_events) {
       this->events->SetBranchStatus("*", 0);
       this->events->SetBranchStatus("e", 1);
@@ -45,27 +51,48 @@ class Dataset {
     std::string name;
     size_t nevents;
     TTree* events;
-};    
-
-
-// construct an events * pdfs likelihood lookup table
-// this is stored as a contiguous 1d array indexed by "iev*nsignals+isignal"
-float* build_lut(const std::vector<Signal>& signals, const Dataset& data);
+};
 
 
 // a structure for passing information to minuit
 struct Experiment {
-  size_t nevents;
-  std::vector<Signal>* signals;
+  size_t nevents;  // total event count in dataset (rows in lut)
+  const std::vector<Signal>* signals;
   GPULL* ll;
 };
 
 
-// compute the negative log likelihood for the given parameters
-// gpu-accelerated
-void nll_gpu(int& ndim, double* gout, double& result, double* par, int flags);
+// user interface to the MINUIT ML fit
+class Fit {
+  public:
+    Fit(const std::vector<Signal>& signals, const Dataset& data);
 
+    virtual ~Fit() {
+      delete this->ll;
+      delete this->lut;
+      delete this->minuit;
+    }
 
-// perform a fit or signal pdfs to the data, returning a TMinuit with final results
-TMinuit* run_fit(const std::vector<Signal>& signals, const Dataset& data);
+    // run the fit, optionally specifying some different starting normalizations
+    // and fixed/unfixed status
+    TMinuit* operator()(std::map<std::string, float>* _norms=nullptr, std::map<std::string, bool>* _fix=nullptr);
+
+  protected:
+    // construct a P(x) lookup table
+    float* build_lut(const std::vector<Signal>& signals, const Dataset& data) const;
+
+    // minuit fit function
+    static void nll(int& ndim, double* gout, double& result, double* par, int flags);
+
+    // global container for passing state to the minuit fit function
+    static Experiment experiment;
+
+  private:
+    float* lut;  // P(x) lookup table
+    GPULL* ll;  // GPU LL interface
+    TMinuit* minuit;
+    std::vector<Signal> signals;
+};
+
+#endif  // __FIT_H__
 

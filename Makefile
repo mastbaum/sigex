@@ -9,14 +9,14 @@ CC = g++
 NVCC = $(CUDA_ROOT)/bin/nvcc
 
 OBJ_DIR = build
-SOURCES = src/util.cpp src/fit.cpp
+SOURCES = src/util.cpp src/fit.cpp src/limits.cpp
 OBJECTS = $(SOURCES:src/%.cpp=$(OBJ_DIR)/%.o)
-EXE = fit
+EXE = limits
 
-all: pdf counting ll.o $(OBJECTS) $(EXE)
+all: pdf ll.o $(OBJECTS) $(EXE)
 
 clean:
-	-$(RM) build/*.o bin/pdf bin/fit
+	-$(RM) build/*.o bin/pdf bin/fit bin/counting bin/limits
 
 pdf: $(OBJECTS)
 	test -d bin || mkdir bin
@@ -36,7 +36,7 @@ endif
 
 $(EXE): $(OBJECTS) ll.o
 	test -d bin || mkdir bin
-	$(CC) -o bin/$@ $(OBJ_DIR)/$@.o $(OBJ_DIR)/util.o $(OBJ_DIR)/ll.o $(CFLAGS) $(LFLAGS) $(CUDA_LFLAGS)
+	$(CC) -o bin/$@ $(OBJ_DIR)/$@.o $(OBJ_DIR)/fit.o $(OBJ_DIR)/util.o $(OBJ_DIR)/ll.o $(CFLAGS) $(LFLAGS) $(CUDA_LFLAGS)
 
 ll.o:
 	test -d build || mkdir build

@@ -49,7 +49,7 @@ double median(std::vector<double> &v) {
 }
 
 
-FitConfig::FitConfig(std::string filename) {
+FitConfig::FitConfig(std::string const filename) {
   Json::Value root;
   Json::Reader reader;
 
@@ -83,9 +83,18 @@ FitConfig::FitConfig(std::string filename) {
   assert(fit_params.isMember("signal_name"));
   this->signal_name = fit_params["signal_name"].asString();
 
+  std::vector<std::string> fit_signal_names;
+  for (Json::Value::iterator it=fit_params["signals"].begin(); it!=fit_params["signals"].end(); it++) {
+    fit_signal_names.push_back((*it).asString());
+  }
+
   // signal parameters
   const Json::Value signal_names = root["signals"];
   for (auto it=signal_names.begin(); it!=signal_names.end(); it++) {
+    if (std::find(fit_signal_names.begin(), fit_signal_names.end(), it.key().asString()) == fit_signal_names.end()) {
+      continue;
+    }
+    
     const Json::Value signal_params = root["signals"][it.key().asString()];
 
     Signal s;
@@ -95,7 +104,7 @@ FitConfig::FitConfig(std::string filename) {
     s.constraint = signal_params.get("constraint", 0).asFloat();
 
     assert(signal_params.isMember("rate"));
-    s.rate = signal_params["rate"].asFloat();
+    s.rate = signal_params["rate"].asFloat() * this->live_time;  // fixme is event expectation value not rate
 
     assert(signal_params.isMember("filename"));
     std::string filename = signal_params["filename"].asString();
@@ -103,11 +112,10 @@ FitConfig::FitConfig(std::string filename) {
     TH2F* h2d = load_histogram(filename, "pdf");
 
     if (this->mode == FitMode::ENERGY) {
-      s.ndim = 1;
       s.histogram = dynamic_cast<TH1*>(project1d(h2d, &r_range));
+      s.rate *= (s.histogram->Integral() / h2d->Integral());
     }
     else if (this->mode == FitMode::ENERGY_RADIUS) {
-      s.ndim = 2;
       s.histogram = dynamic_cast<TH1*>(h2d);
     }
     else {
@@ -121,7 +129,7 @@ FitConfig::FitConfig(std::string filename) {
 }
 
 
-TH2F* FitConfig::load_histogram(const std::string filename, const std::string objname) {
+TH2F* FitConfig::load_histogram(std::string const filename, std::string const objname) {
   TFile f(filename.c_str());
   assert(!f.IsZombie());
   TH2F* h = dynamic_cast<TH2F*>(f.Get(objname.c_str()));
@@ -130,7 +138,7 @@ TH2F* FitConfig::load_histogram(const std::string filename, const std::string ob
 }
 
 
-TH1D* FitConfig::project1d(const TH2F* hist2d, const Range<float>* r_range) {
+TH1D* FitConfig::project1d(TH2F* const hist2d, Range<float>* const r_range) {
   int first_bin = 0;
   int last_bin = -1;
   if (r_range != nullptr) {
