@@ -12,6 +12,7 @@
 #include <RAT/DS/Root.hh>
 #include <RAT/DS/FitVertex.hh>
 #include <RAT/DS/PMTCal.hh>
+
 #include "util.h"
 
 // make a TH1F from a selector

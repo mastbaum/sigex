@@ -5,14 +5,11 @@
 #include <vector>
 #include <string>
 #include <assert.h>
-#include <TChain.h>
-#include <TNtuple.h>
 #include <TH2F.h>
-#include <TFile.h>
 #include <TStopwatch.h>
 #include <TMath.h>
-#include <TRandom.h>
 #include <TMinuit.h>
+
 #include "util.h"
 #include "ll.h"
 #include "fit.h"
@@ -20,19 +17,21 @@
 #define __GPU__  // use the GPU to accelerate NLL calculation
 //#define DEBUG  // enable debugging printout
 
+#ifndef VERBOSE
+#define VERBOSE false
+#endif
 
-Experiment Fit::experiment = Experiment();
+std::vector<Signal> Fit::signals;
+GPULL* Fit::ll;
+size_t Fit::nevents;
 
 
 Fit::Fit(const std::vector<Signal>& signals, const Dataset& data) {
-  this->signals = signals;
-  this->lut = this->build_lut(this->signals, data);
-  this->ll = new GPULL(this->lut, this->signals.size(), data.nevents);
+  Fit::signals = signals;
+  Fit::nevents = data.nevents;
 
-  // set globals for minuit
-  experiment.ll = this->ll;
-  experiment.nevents = data.nevents;
-  experiment.signals = &this->signals;
+  this->lut = this->build_lut(Fit::signals, data);
+  Fit::ll = new GPULL(this->lut, Fit::signals.size(), Fit::nevents);
 
   // set up minuit instance
   minuit = new TMinuit(signals.size());
@@ -47,18 +46,18 @@ Fit::Fit(const std::vector<Signal>& signals, const Dataset& data) {
   minuit->SetFCN(Fit::nll);
 
   for (size_t i=0; i<signals.size(); i++) {
-    this->minuit->mnparm(i, signals[i].name.c_str(), 1.0, 0.01, -10, 10, eflag);
+    this->minuit->mnparm(i, signals[i].name.c_str(), 1.0, 1e-3, -50, 50, eflag);
   }
 }
 
 
-float* Fit::build_lut(const std::vector<Signal>& signals, const Dataset& data) const {
+float* Fit::build_lut(const std::vector<Signal>& signals, const Dataset& data) {
   int nevents = data.nevents;
   float* lut = new float[signals.size() * nevents];
 
   std::vector<float> minima;
   for (auto it=signals.begin(); it!=signals.end(); ++it) {
-    minima.push_back((*it).histogram->GetMinimum(0) * 0.001);
+    minima.push_back((*it).histogram->GetMinimum(0) * 0.0001);
   }
 
   float e;
@@ -77,7 +76,8 @@ float* Fit::build_lut(const std::vector<Signal>& signals, const Dataset& data) c
         v = dynamic_cast<TH1D*>(signals[j].histogram)->Interpolate(e);
       }
       else {
-        std::cerr << "build_lut: Unknown histogram class " << signals[j].histogram->ClassName() << std::endl;
+        std::cerr << "build_lut: Unknown histogram class "
+                  << signals[j].histogram->ClassName() << std::endl;
         assert(false);
       }
       
@@ -92,31 +92,33 @@ float* Fit::build_lut(const std::vector<Signal>& signals, const Dataset& data) c
 }
 
 
-void Fit::nll(int& ndim, double* gout, double& result, double* par, int flags) {
-  size_t n = experiment.signals->size();
+void Fit::nll(int& ndim, double* gout, double& result, double* par,
+              int flags) {
+  size_t n = Fit::signals.size();
   result = 0;
 
   // sum(N) + constraints
   for (size_t i=0; i<n; i++) {
-    result += par[i] * experiment.signals->at(i).rate;
-    if (experiment.signals->at(i).constraint > 0) {
-      result += 0.5 * TMath::Power((par[i]-1.0)/experiment.signals->at(i).constraint, 2);
+    result += par[i] * Fit::signals.at(i).rate;
+    if (Fit::signals.at(i).constraint > 0) {
+      result += 0.5 * TMath::Power((par[i]-1.0)
+                / Fit::signals.at(i).constraint, 2);
     }
   }
 
   // fixme just delete this
   // -log(N!)
-  if (experiment.nevents < 100) {
-    result -= TMath::Log(TMath::Factorial(experiment.nevents));
+  int nevents = Fit::nevents;
+  if (nevents < 200) {
+    result -= TMath::Log(TMath::Factorial(nevents));
   }
   else {
-    int nevents = experiment.nevents;
     result -= TMath::Log(nevents * TMath::Log(nevents) - nevents);  // stirling
   }
 
   // sum(log(sum(N_j * P_j(x_i))))
 #ifdef __GPU__
-  result -= (*experiment.ll)(par);
+  result -= (*Fit::ll)(par);
 #else
   std::cerr << "CPU NLL not yet implemented" << std::endl;
   assert(0);
@@ -126,23 +128,29 @@ void Fit::nll(int& ndim, double* gout, double& result, double* par, int flags) {
   // print parameters at each iteration
   std::cout << "+ ";
   for (size_t i=0; i<n; i++) {
-    std::cout << par[i] * experiment.signals->at(i).norm << " (" << par[i] << ") " << "\t";
+    std::cout << par[i] * Fit::signals->at(i).norm << " (" << par[i] << ") \t";
   }
   std::cout << result << std::endl;
 #endif
 }
 
 
-TMinuit* Fit::operator()(std::map<std::string, float>* _norms, std::map<std::string, bool>* _fix) {
+TMinuit* Fit::operator()(Range<float> e_range,
+                         std::map<std::string, float>* _norms,
+                         std::map<std::string, bool>* _fix,
+                         bool run_minos) {
   // build a complete list of normalizations
   float* norms = new float[this->signals.size()];
   for (size_t i=0; i<this->signals.size(); i++) {
-    norms[i] = this->signals[i].rate;
+    int x1 = this->signals[i].histogram->FindBin(e_range.min);
+    int x2 = this->signals[i].histogram->FindBin(e_range.max);
+    double ii = this->signals[i].histogram->Integral(x1, x2);
+    norms[i] = this->signals[i].rate / (ii / this->signals[i].histogram->Integral());
     if (_norms != nullptr) {
       auto new_norm = _norms->find(this->signals[i].name);
       if (new_norm != _norms->end()) {
         norms[i] = new_norm->second;
-        experiment.nevents -= (this->signals[i].rate - new_norm->second);
+        this->signals[i].rate = new_norm->second;
       }
     }
   }
@@ -178,20 +186,30 @@ TMinuit* Fit::operator()(std::map<std::string, float>* _norms, std::map<std::str
   }
 
   // run fit
-  std::cout << "Starting fit..." << std::endl;
+  if (VERBOSE) {
+    std::cout << "Starting fit..." << std::endl;
+  }
   TStopwatch timer;
   timer.Start();
 
   minuit->mnexcm("SIMPLEX 4000", 0, 0, eflag);
   minuit->mnexcm("MINIMIZE 4000", 0, 0, eflag);
-  //minuit->mnexcm("MINOS", 0, 0, eflag);
+  if (run_minos) {
+    minuit->mnexcm("MINOS", 0, 0, eflag);
+  }
 
-  std::cout << "Fit completed in " << timer.RealTime() << " seconds" << std::endl;
+  if (VERBOSE) {
+    std::cout << "Fit completed in " << timer.RealTime() << " seconds"
+              << std::endl;
 
-  for (size_t i=0; i<this->signals.size(); i++) {
-    double p, err;
-    minuit->GetParameter(i, p, err);
-    std::cout << signals[i].name << ": " << p * norms[i] << std::endl;
+    double sum = 0;
+    for (size_t i=0; i<this->signals.size(); i++) {
+      double p, err;
+      minuit->GetParameter(i, p, err);
+      std::cout << signals[i].name << ": " << p * norms[i] << std::endl;
+      sum += p * norms[i];
+    }
+    std::cout << "total fit events: " << sum << std::endl;
   }
 
   delete[] norms;
