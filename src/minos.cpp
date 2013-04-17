@@ -41,7 +41,7 @@ Fit* run_experiment(std::vector<Signal> signals, std::string signal_name,
 
   // best fit
   Fit* fit = new Fit(signals, data);
-  const TMinuit* minuit = (*fit)(e_range, nullptr, nullptr, true);  // compute minos errors
+  const TMinuit* minuit = (*fit)(e_range, r_range, nullptr, nullptr, true);  // compute minos errors
 
   double lfit, edm, errdef;
   int nvpar, nparx, icstat;
@@ -68,6 +68,7 @@ Fit* run_experiment(std::vector<Signal> signals, std::string signal_name,
     return fit;
   }
   else {
+    std::cerr << "Warning: MINUIT failed with status " << minuit->fCstatu << std::endl;
     delete fit;
     return static_cast<Fit*>(nullptr);
   }
@@ -90,14 +91,15 @@ int main(int argc, char* argv[]) {
   // convert central-value Gaussian CL (x 10000) to quantile
   // cf. Cowan p. 125
   // todo: replace with an error function
-  std::map<double, double> quantiles = {{ 6800, 1.000 },
+  std::map<double, double> quantiles = {{    0,     0 },
+                                        { 6800, 1.000 },
                                         { 9000, 1.645 },
                                         { 9500, 1.960 },
                                         { 9900, 2.576 },
                                         { 9990, 3.291 },
                                         { 9999, 3.891 }};
   int confidence = static_cast<int>(fc.confidence * 10000);
-  double quantile = quantiles[confidence];
+  double quantile = quantiles.at(confidence);
 
   // run an ensemble of fake experiments
   TH1F hs("hs", "#hat{S}", 550, -50, 500);
@@ -161,73 +163,208 @@ int main(int argc, char* argv[]) {
   std::cout << "Average limit (sum of means method): " << meds_msum << std::endl;
 
 
-  // plot
-  //FakeDataGenerator gen(fc.signals, fc.e_range, fc.r_range);
-  //std::map<std::string, double> mnorm = {{ fc.signal_name, 0 }};
-  //TNtuple* nt = gen.make_dataset(true, &mnorm);
+  // plots
   gStyle->SetOptStat(0);
   std::vector<int> colors = {2, 3, 4, 6, 7, 8, 9, 11, 29, 5, 30, 34, 38, 40, 42, 45, 49};
+
+  TCanvas ce;
+  ce.SetLogy();
+  TCanvas cr;
+  cr.SetLogy();
+  TLegend stan(0.85, 0.35, 0.98, 0.88);
+  stan.SetBorderSize(1);
+  stan.SetFillColor(0);
+
+  TH1F* hesum = nullptr;
+  TH1F* hesum_ns = nullptr;
+  TH1F* hrsum = nullptr;
+  TH1F* hrsum_ns = nullptr;
+
+  for (size_t i=0; i<fc.signals.size(); i++) {
+    TH1F* he = nullptr;
+    TH1F* hr = nullptr;
+    TH1* ht = fc.signals[i].histogram;
+    double integral = -1;
+    if (ht->IsA() == TH2F::Class()) {
+      TH2F* h2 = (TH2F*)(ht);
+      int first_bin = h2->GetXaxis()->FindBin(fc.r_range.min);
+      int last_bin = h2->GetXaxis()->FindBin(fc.r_range.max);
+      TH1D* tt = h2->ProjectionY("pdf_proj_y", first_bin, last_bin);
+      TH1F temp;
+      tt->Copy(temp);  // convert TH1D to TH1F
+      he = (TH1F*) temp.Clone("he");
+
+      first_bin = ht->GetYaxis()->FindBin(fc.e_range.min);
+      last_bin = ht->GetYaxis()->FindBin(fc.e_range.max);
+      TH1D* temp2 = dynamic_cast<TH2F*>(ht)->ProjectionX("hr", first_bin, last_bin);
+      TH1F temp3;
+      temp2->Copy(temp3);
+      hr = new TH1F(temp3);
+
+      int x1 = h2->GetXaxis()->FindBin(fc.r_range.min);
+      int x2 = h2->GetXaxis()->FindBin(fc.r_range.max);
+      int y1 = h2->GetYaxis()->FindBin(fc.e_range.min);
+      int y2 = h2->GetYaxis()->FindBin(fc.e_range.max);
+      integral = h2->Integral(x1, x2, y1, y2);
+    }
+    else {
+      he = (TH1F*)(ht);
+      int x1 = he->FindBin(fc.e_range.min);
+      int x2 = he->FindBin(fc.e_range.max);
+      integral = he->Integral(x1, x2);
+    }
+
+    double p = (fc.signals[i].name == fc.signal_name ? meds : fc.signals[i].rate);
+    std::cout << fc.signals[i].name << ": " << p << " " << integral << " " << he->Integral() << std::endl;
+    he->Scale(p/integral);
+    if (hr) {
+      hr->Scale(p/integral);
+    }
+
+    if (hesum == nullptr) {
+      if (hr) {
+        hrsum = (TH1F*)hr->Clone("hrsum");
+        hrsum->Reset();
+        hrsum->SetLineColor(kBlack);
+        hrsum->SetLineWidth(2);
+
+        hrsum_ns = (TH1F*)hr->Clone("hrsum_ns");
+        hrsum_ns->Reset();
+        hrsum_ns->SetLineColor(kBlack);
+        hrsum_ns->SetLineWidth(2);
+        hrsum_ns->SetLineStyle(2);
+      }
+
+      hesum = (TH1F*)he->Clone("hesum");
+      hesum->Reset();
+      hesum->SetLineColor(kBlack);
+      hesum->SetLineWidth(2);
+      stan.AddEntry(hesum, "Sum");
+
+      hesum_ns = (TH1F*)he->Clone("hesum_ns");
+      hesum_ns->Reset();
+      hesum_ns->SetLineColor(kBlack);
+      hesum_ns->SetLineWidth(2);
+      hesum_ns->SetLineStyle(2);
+      stan.AddEntry(hesum_ns, "Sum, no signal");
+    }
+
+    if (hr) {
+      hrsum->Add(hr);
+      if (fc.signals[i].name != fc.signal_name) {
+        hrsum_ns->Add(hr);
+      }
+    }
+
+    hesum->Add(he);
+    if (fc.signals[i].name != fc.signal_name) {
+      hesum_ns->Add(he);
+    }
+
+    if (hr) {
+      hr->GetXaxis()->SetRangeUser(fc.r_range.min, fc.r_range.max);
+      hr->SetAxisRange(5e-2, 1e5, "Y"); //1e-4, 5, "Y");
+      hr->SetLineColor(colors[i%colors.size()]);
+      hr->SetLineWidth(2);
+    }
+
+    he->GetXaxis()->SetRangeUser(2, 3.2);
+    he->SetAxisRange(1e-1, 5e3, "Y");
+    char cl[100];
+    snprintf(cl, 100, "%1.2f%% CL #hat{S} = %1.2f (%i experiments, %1.0f y)",
+             fc.confidence*100, meds, fc.mc_trials, fc.live_time);
+    he->SetTitle(cl);
+    he->SetLineColor(colors[i%colors.size()]);
+    he->SetLineWidth(2);
+    stan.AddEntry(he, fc.signals[i].title.c_str());
+
+    ce.cd();
+    he->Draw(i==0 ? "" : "same");
+
+    if (hr) {
+      cr.cd();
+      hr->Draw(i==0 ? "" : "same");
+    }
+  }
+
+  ce.cd();
+  hesum->Draw("same");
+  hesum_ns->Draw("same");
+  stan.Draw();
+  ce.SaveAs((fc.output_file + "_e.pdf").c_str());
+
+  if (hrsum) {
+    cr.cd();
+    hrsum->Draw("same");
+    hrsum_ns->Draw("same");
+    stan.Draw();
+    cr.SaveAs((fc.output_file + "_r.pdf").c_str());
+  }
+
+/*
+  // energy
   TCanvas c2;
-  TH1F* hsum = nullptr;
-  TH1F* hsum_ns = nullptr;
-  TH1F* hdata = nullptr;
   c2.SetLogy();
-  TLegend stan(0.65, 0.55, 0.88, 0.88);
-  stan.SetBorderSize(0);
+
+  TH1F* hsum = h.;
+  TH1F* hsum_ns = nullptr;
+  TLegend stan(0.75, 0.35, 0.88, 0.88);
+  stan.SetBorderSize(1);
   stan.SetFillColor(0);
   bool first = true;
   size_t icolor = 0;
   for (size_t i=0; i<fc.signals.size(); i++) {
-    double p = (fc.signals[i].name == fc.signal_name ? meds : fc.signals[i].rate);
-    int x1 = fc.signals[i].histogram->FindBin(fc.e_range.min);
-    int x2 = fc.signals[i].histogram->FindBin(fc.e_range.max);
-    double ii = fc.signals[i].histogram->Integral(x1, x2);
-    fc.signals[i].histogram->Scale(p/ii);
+    TH1* ht = fc.signals[i].histogram;
+    TH1F h;
+    if (ht->IsA() == TH2F::Class()) {
+      h.Copy(*FitConfig::project1d(dynamic_cast<TH2F*>(ht), &fc.r_range));
+    }
+    else if (h.IsA() == TH1F::Class()) {
+      h = *((TH1F*)(ht));
+    }
 
-    fc.signals[i].histogram->SetAxisRange(1e-1, 1e3, "Y");
+    double p = (fc.signals[i].name == fc.signal_name ? meds : fc.signals[i].rate);
+    int x1 = h.FindBin(fc.e_range.min);
+    int x2 = h.FindBin(fc.e_range.max);
+    double ii = h.Integral(x1, x2);
+    h.Scale(p/ii);
+
+    h.SetAxisRange(1e-1, 1e4, "Y");
     char binsize[20];
-    snprintf(binsize, 20, "%1.0f", fc.signals[i].histogram->GetXaxis()->GetBinWidth(1) * 1000);
-    fc.signals[i].histogram->SetYTitle(("Counts per " + std::string(binsize) + " keV bin").c_str());
-    fc.signals[i].histogram->GetXaxis()->SetRangeUser(2, 3.2);
+    snprintf(binsize, 20, "%1.0f", h.GetXaxis()->GetBinWidth(1) * 1000);
+    h.SetYTitle(("Counts per " + std::string(binsize) + " keV bin").c_str());
+    h.GetXaxis()->SetRangeUser(2, 3.2);
     char cl[100];
     snprintf(cl, 100, "%1.2f%% CL #hat{S} = %1.2f (%i experiments, %1.0f y)",
              fc.confidence*100, meds, fc.mc_trials, fc.live_time);
-    fc.signals[i].histogram->SetTitle(cl);
-    fc.signals[i].histogram->SetXTitle("Energy (MeV)");
-
-    if (hdata == nullptr) {
-      hdata = (TH1F*) fc.signals[i].histogram->Clone("hdata");
-      hdata->SetLineColor(4);
-      hdata->SetLineWidth(2);
-      //stan.AddEntry(hdata, "Sample MC");
-      //nt->Draw("e>>hdata");
-      //hdata->Draw(first ? "" : "same");
-      //first = false;
-    }
+    h.SetTitle(cl);
+    h.SetXTitle("Energy (MeV)");
 
     if (hsum == nullptr) {
-      hsum = (TH1F*) fc.signals[i].histogram->Clone("hsum");
+      hsum = (TH1F*) h.Clone("hsum");
+      hsum->Reset();
       hsum->SetLineColor(1);
       hsum->SetLineWidth(2);
       stan.AddEntry(hsum, "Sum");
     }
 
     if (hsum_ns == nullptr) {
-      hsum_ns = (TH1F*) fc.signals[i].histogram->Clone("hsum_ns");
+      hsum_ns = (TH1F*) h.Clone("hsum_ns");
+      hsum_ns->Reset();
       hsum_ns->SetLineColor(1);
       hsum_ns->SetLineWidth(2);
       hsum_ns->SetLineStyle(2);
       stan.AddEntry(hsum_ns, "Sum, no signal");
     }
 
-    fc.signals[i].histogram->SetLineColor(colors[icolor]);
-    fc.signals[i].histogram->SetLineWidth(2);
-    fc.signals[i].histogram->Draw(first ? "": "same");
-    stan.AddEntry(fc.signals[i].histogram, fc.signals[i].title.c_str());
+    h.SetLineColor(colors[icolor%colors.size()]);
+    h.SetLineWidth(2);
+    h.Draw(first ? "": "same");
+    stan.AddEntry(&h, fc.signals[i].title.c_str());
 
-    hsum->Add(fc.signals[i].histogram);
+    hsum->Add(&h);
     if (fc.signals[i].name != fc.signal_name) {
-      hsum_ns->Add(fc.signals[i].histogram);
+      hsum_ns->Add(&h);
     }
 
     icolor++;
@@ -238,9 +375,9 @@ int main(int argc, char* argv[]) {
   hsum_ns->Draw("same");
   stan.Draw();
   c2.Update();
-  c2.SaveAs("fit_spectrum_b.C");
-  c2.SaveAs("fit_spectrum_b.pdf");
-
+  c2.SaveAs((fc.output_file + ".C").c_str());
+  c2.SaveAs((fc.output_file + ".pdf").c_str());
+*/
   return 0;
 }
 

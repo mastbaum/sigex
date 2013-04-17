@@ -8,7 +8,7 @@
 #include <jsoncpp/json/value.h>
 #include <jsoncpp/json/reader.h>
 #include <TFile.h>
-#include <TRandom.h>  // for poisson in FakeDataGenerator
+#include <TRandom.h>
 #include <TChain.h>
 #include <TNtuple.h>
 #include <TH1.h>
@@ -74,12 +74,12 @@ TNtuple* FakeDataGenerator::make_dataset(bool poisson, std::map<std::string, dou
 
     if (it->second->IsA() == TH2F::Class()) {
       TH2F* ht = dynamic_cast<TH2F*>(it->second);
-      int x1 = it->second->GetXaxis()->FindBin(r_range.min);
-      int x2 = it->second->GetXaxis()->FindBin(r_range.max);
-      int y1 = it->second->GetYaxis()->FindBin(e_range.min);
-      int y2 = it->second->GetYaxis()->FindBin(e_range.max);
-      double integral = ht->Integral(x1, x2, y1, y2);
-      nexpected *= integral;
+      //int x1 = it->second->GetXaxis()->FindBin(r_range.min);
+      //int x2 = it->second->GetXaxis()->FindBin(r_range.max);
+      //int y1 = it->second->GetYaxis()->FindBin(e_range.min);
+      //int y2 = it->second->GetYaxis()->FindBin(e_range.max);
+      //double integral = ht->Integral(x1, x2, y1, y2);
+      //nexpected *= integral;
       int nobserved = nexpected;
       if (poisson && nexpected > 0) {
         nobserved = gRandom->Poisson(nexpected);
@@ -167,6 +167,12 @@ FitConfig::FitConfig(std::string const filename) {
   else {
     this->fake_experiments = this->mc_trials;
   }
+  if (fit_params.isMember("output_file")) {
+    this->output_file = fit_params["output_file"].asString();
+  }
+  else {
+    this->output_file = "fit_spectrum";
+  }
   assert(fit_params.isMember("signal_name"));
   this->signal_name = fit_params["signal_name"].asString();
 
@@ -211,12 +217,13 @@ FitConfig::FitConfig(std::string const filename) {
     }
     else if (this->mode == FitMode::ENERGY_RADIUS) {
       s.histogram = dynamic_cast<TH1*>(h2d);
-      //int x1 = h2d->GetXaxis()->FindBin(r_range.min);
-      //int x2 = h2d->GetXaxis()->FindBin(r_range.max);
-      //int y1 = h2d->GetYaxis()->FindBin(e_range.min);
-      //int y2 = h2d->GetYaxis()->FindBin(e_range.max);
-      //double integral = h2d->Integral(x1, x2, y1, y2);
-      //s.rate *= integral / h2d->Integral();
+      int x1 = h2d->GetXaxis()->FindBin(r_range.min);
+      int x2 = h2d->GetXaxis()->FindBin(r_range.max);
+      int y1 = h2d->GetYaxis()->FindBin(e_range.min);
+      int y2 = h2d->GetYaxis()->FindBin(e_range.max);
+      double integral = h2d->Integral(x1, x2, y1, y2);
+      s.rate *= integral / h2d->Integral();
+      dynamic_cast<TH2F*>(s.histogram)->RebinY(4);
     }
     else {
       std::cerr << "Unknown fit mode " << static_cast<int>(this->mode) << std::endl;
@@ -260,6 +267,7 @@ void FitConfig::print() const {
             << "  Signal name: " << this->signal_name << std::endl
             << "  Energy: (" << this->e_range.min << ", " << this->e_range.max << ") MeV" << std::endl
             << "  Radius: (" << this->r_range.min << ", " << this->r_range.max << ") mm" << std::endl
+            << "  Output plot:" << this->output_file << std::endl
             << "Experiment:" << std::endl
             << "  Live time: " << this->live_time << " y" << std::endl
             << "  Confidence level: " << this->confidence << std::endl

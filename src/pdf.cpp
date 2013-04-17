@@ -204,7 +204,7 @@ TH2F* make_fit_e_r_pdf(const std::vector<std::string> filenames,
 void print_usage() {
   std::cout << "PDFify v0.1 -- "
             << "Make PDFs from RAT ROOT files" << std::endl
-            << "Usage: pdfify <mode (ratroot|ratlist)> "
+            << "Usage: pdf <mode (ratroot|ratlist)> "
             << "(file1.root file2.root ...|filelist.txt) "
             << "outfile.root" << std::endl;
 }

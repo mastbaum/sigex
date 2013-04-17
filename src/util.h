@@ -133,17 +133,18 @@ class FitConfig {
     float efficiency;  // overall efficiency correction
     unsigned mc_trials;  // number of experiments to generate
     unsigned fake_experiments;  // number of fake experiments per experiment
+    std::string output_file;  // base filename for output
     std::string signal_name;  // name of the signal that is the signal
     Range<float> e_range;  // range of energies to include in fit
     Range<float> r_range;  // range of radii to include in fit
     std::vector<Signal> signals;  // signal histogram and metadata
 
+    // project a TH2F down to an energy-only TH1F, optionally cutting on radius
+    static TH1D* project1d(TH2F* const hist2d, Range<float>* const r_range=nullptr);
+
   protected:
     // load an energy/radius ROOT TH2F from a file
     static TH2F* load_histogram(std::string const filename, std::string const objname);
-
-    // project a TH2F down to an energy-only TH1F, optionally cutting on radius
-    static TH1D* project1d(TH2F* const hist2d, Range<float>* const r_range=nullptr);
 };
 
 #endif  // __UTIL_H__

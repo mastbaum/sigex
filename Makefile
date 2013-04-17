@@ -2,16 +2,16 @@ CUDA_INCLUDE = -I$(CUDA_ROOT)/include
 CUDA_CFLAGS = -arch=sm_30 -use_fast_math
 CUDA_LFLAGS = -L$(CUDA_ROOT)/lib64 -lcudart
 INCLUDE = -Isrc -I$(RATROOT)/include -I$(RATROOT)/src/stlplus
-CFLAGS = -DVERBOSE=true -O3 --std=c++0x -Wall -Werror -ffast-math -fdiagnostics-show-option $(shell root-config --cflags) $(INCLUDE)
+CFLAGS = -DVERBOSE=true -g --std=c++0x -Wall -Werror -ffast-math -fdiagnostics-show-option $(shell root-config --cflags) $(INCLUDE)
 LFLAGS = -L$(RATROOT)/lib -lRATEvent_$(shell uname)-g++ -lMinuit $(shell root-config --libs) -ljsoncpp
 
 CC = g++
 NVCC = $(CUDA_ROOT)/bin/nvcc
 
 OBJ_DIR = build
-SOURCES = src/util.cpp src/fit.cpp src/limits.cpp src/minos.cpp
+SOURCES = src/util.cpp src/fit.cpp src/limits.cpp src/minos.cpp src/plots.cpp
 OBJECTS = $(SOURCES:src/%.cpp=$(OBJ_DIR)/%.o)
-EXE = limits minos
+EXE = limits minos plots
 
 all: pdf ll.o $(OBJECTS) $(EXE)
 

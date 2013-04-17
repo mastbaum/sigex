@@ -34,7 +34,7 @@ class Fit {
 
     // run the fit, optionally specifying some different starting normalizations
     // and fixed/unfixed status
-    TMinuit* operator()(Range<float> e_range,
+    TMinuit* operator()(Range<float> e_range, Range<float> r_range,
                         std::map<std::string, float>* _norms=nullptr,
                         std::map<std::string, bool>* _fix=nullptr,
                         bool run_minos=false);

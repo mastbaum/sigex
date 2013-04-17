@@ -25,7 +25,7 @@
 // run an experiment, get an upper limit
 float get_ul(std::vector<Signal> _signals, std::string signal_name,
              float confidence, FakeDataGenerator& gen, unsigned nmc, TH2F* hr,
-             Range<float> e_range) {
+             Range<float> e_range, Range<float> r_range) {
   std::vector<Signal> signals = _signals;
 
   // make experiment data
@@ -35,7 +35,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
 
   // best fit
   Fit* fit = new Fit(signals, data);
-  TMinuit* minuit = (*fit)(e_range);
+  TMinuit* minuit = (*fit)(e_range, r_range);
   double lfit, edm, errdef;
   int nvpar, nparx, icstat;
   minuit->mnstat(lfit, edm, errdef, nvpar, nparx, icstat);
@@ -60,7 +60,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
     std::map<std::string, float> n = {{signal_name, ns}};
     std::map<std::string, bool> f = {{signal_name, true}};
     std::cout << "NS = " << ns << std::endl;
-    minuit = (*fit)(e_range, &n, &f);
+    minuit = (*fit)(e_range, r_range, &n, &f);
     double lfix;
     minuit->mnstat(lfix, edm, errdef, nvpar, nparx, icstat);
     if (VERBOSE) {
@@ -102,7 +102,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
 
       // best fit
       Fit* fit = new Fit(signals, fakedata);
-      minuit = (*fit)(e_range);
+      minuit = (*fit)(e_range, r_range);
       double lfit_fake;
       minuit->mnstat(lfit_fake, edm, errdef, nvpar, nparx, icstat);
       if (VERBOSE) {
@@ -113,7 +113,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
       // conditional best fit
       n = {{signal_name, ns}};
       f = {{signal_name, true}};
-      minuit = (*fit)(e_range, &n, &f);
+      minuit = (*fit)(e_range, r_range, &n, &f);
       double lfix_fake;
       minuit->mnstat(lfix_fake, edm, errdef, nvpar, nparx, icstat);
       if (VERBOSE) {
@@ -187,7 +187,7 @@ int main(int argc, char* argv[]) {
   const unsigned nfake = fc.fake_experiments;
   for (unsigned i=0; i<nmc; i++) {
     float ul = get_ul(fc.signals, fc.signal_name, fc.confidence, gen, nfake,
-                      &hr, fc.e_range);
+                      &hr, fc.e_range, fc.r_range);
     rs.push_back(ul);
     std::cout << "Experiment " << i << ": UL N=" << ul << std::endl
               << "========================================================="
