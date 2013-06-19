@@ -11,10 +11,8 @@
 #include <TMinuit.h>
 
 #include "util.h"
-#include "ll.h"
 #include "fit.h"
 
-#define __GPU__  // use the GPU to accelerate NLL calculation
 //#define DEBUG  // enable debugging printout
 
 #ifndef VERBOSE
@@ -22,16 +20,25 @@
 #endif
 
 std::vector<Signal> Fit::signals;
-GPULL* Fit::ll;
-size_t Fit::nevents;
+Range<float> Fit::e_range;
+Range<float> Fit::r_range;
+float* Fit::norms;
+TH1* Fit::data;
 
 
 Fit::Fit(const std::vector<Signal>& signals, const Dataset& data) {
   Fit::signals = signals;
-  Fit::nevents = data.nevents;
 
-  this->lut = this->build_lut(Fit::signals, data);
-  Fit::ll = new GPULL(this->lut, Fit::signals.size(), Fit::nevents);
+  // bin the data
+  Fit::data = (TH1*) signals[0].histogram->Clone("data");
+  Fit::data->Reset();
+  if (Fit::data->IsA() == TH2F::Class()) {
+    data.events->Draw("r:e>>data");
+  }
+  else {
+    data.events->Draw("e>>data");
+  }
+  std::cout << "data: " << Fit::data->Integral() << std::endl;
 
   // set up minuit instance
   minuit = new TMinuit(signals.size());
@@ -46,83 +53,62 @@ Fit::Fit(const std::vector<Signal>& signals, const Dataset& data) {
   minuit->SetFCN(Fit::nll);
 
   for (size_t i=0; i<signals.size(); i++) {
-    this->minuit->mnparm(i, signals[i].name.c_str(), 1.0, 1e-2, 0, 1e2, eflag);
+    this->minuit->mnparm(i, signals[i].name.c_str(), 1.0, 1e-3, 0, 0, eflag);
   }
 }
 
 
-float* Fit::build_lut(const std::vector<Signal>& signals, const Dataset& data) {
-  int nevents = data.nevents;
-  float* lut = new float[signals.size() * nevents];
-
-  std::vector<float> minima;
-  for (auto it=signals.begin(); it!=signals.end(); ++it) {
-    minima.push_back((*it).histogram->GetMinimum(0) * 0.0001);
-  }
-
-  float e;
-  float r;
-  data.events->SetBranchAddress("e", &e);
-  data.events->SetBranchAddress("r", &r);
-
-  for (int i=0; i<nevents; i++) {
-    data.events->GetEntry(i);
-    for (size_t j=0; j<signals.size(); j++) {
-      float v = 0;
-      if (signals[j].histogram->IsA() == TH2F::Class()) {
-        v = dynamic_cast<TH2F*>(signals[j].histogram)->Interpolate(r, e);
-      }
-      else if (signals[j].histogram->IsA() == TH1D::Class()) {
-        v = dynamic_cast<TH1D*>(signals[j].histogram)->Interpolate(e);
-      }
-      else {
-        std::cerr << "build_lut: Unknown histogram class "
-                  << signals[j].histogram->ClassName() << std::endl;
-        assert(false);
-      }
-      
-      if (v <= 0) {
-        v = minima[j];
-      }
-      lut[i*signals.size() + j] = v;
-    }
-  }
-
-  return lut;
-}
-
-
-void Fit::nll(int& ndim, double* gout, double& result, double* par,
-              int flags) {
+void Fit::nll(int& ndim, double* gout, double& result, double* par, int flags) {
   size_t n = Fit::signals.size();
   result = 0;
 
-  // sum(N) + constraints
+  // make summed fit histogram
+  TH1* hfit = (TH1*) signals[0].histogram->Clone("hfit");
+  hfit->Reset();
   for (size_t i=0; i<n; i++) {
-    result += par[i] * Fit::signals.at(i).rate;
+    TH1* h = Fit::signals.at(i).histogram;
+    h->Scale(1.0/h->Integral());
+    hfit->Add(h, Fit::norms[i] * par[i]);
+  }
+
+  // loop over bins
+  if (hfit->IsA() == TH2F::Class()) {
+    TH2F* h2 = dynamic_cast<TH2F*>(hfit);
+    for (int i=1; i<h2->GetNbinsX(); i++) {
+      if (i < h2->GetXaxis()->FindBin(Fit::r_range.min) || i > h2->GetXaxis()->FindBin(Fit::r_range.max)) {
+        continue;
+      }
+      for (int j=1; j<h2->GetNbinsY(); j++) {
+        if (j < h2->GetYaxis()->FindBin(Fit::e_range.min) || j > h2->GetYaxis()->FindBin(Fit::e_range.max)) {
+          continue;
+        }
+        double nexp = h2->GetBinContent(i, j);
+        double nobs = dynamic_cast<TH2F*>(Fit::data)->GetBinContent(i, j);
+        result += (nexp - nobs * TMath::Log(TMath::Max(1e-12, nexp)));
+        //std::cout << "- " << nexp << " " << nobs << " " << TMath::Log(nexp) << " // " << result << std::endl;
+      }
+    }
+  }
+  else {
+    for (int i=1; i<hfit->GetNbinsX(); i++) {
+      if (i < hfit->FindBin(Fit::e_range.min) || i > hfit->FindBin(Fit::e_range.max)) {
+        continue;
+      }
+      double nexp = hfit->GetBinContent(i);
+      double nobs = Fit::data->GetBinContent(i);
+      result += (nexp - nobs * TMath::Log(TMath::Max(1e-12, nexp)));
+      //std::cout << "- " << nexp << " " << nobs << " " << TMath::Log(nexp) << " // " << result << std::endl;
+    }
+  }
+
+  // constraints
+  for (size_t i=0; i<n; i++) {
     if (Fit::signals.at(i).constraint > 0) {
       result += 0.5 * TMath::Power((par[i]-1.0)
                 / Fit::signals.at(i).constraint, 2);
     }
   }
-
-  // fixme just delete this
-  // -log(N!)
-  //int nevents = Fit::nevents;
-  //if (nevents < 200) {
-  //  result -= TMath::Log(TMath::Factorial(nevents));
-  //}
-  //else {
-  //  result -= TMath::Log(nevents * TMath::Log(nevents) - nevents);  // stirling
-  //}
-
-  // sum(log(sum(N_j * P_j(x_i))))
-#ifdef __GPU__
-  result -= (*Fit::ll)(par);
-#else
-  std::cerr << "CPU NLL not yet implemented" << std::endl;
-  assert(0);
-#endif
+  delete hfit;
 
 #ifdef DEBUG
   // print parameters at each iteration
@@ -135,38 +121,28 @@ void Fit::nll(int& ndim, double* gout, double& result, double* par,
 }
 
 
-TMinuit* Fit::operator()(Range<float> e_range, Range<float> r_range,
+TMinuit* Fit::operator()(Range<float> _e_range, Range<float> _r_range,
+                         float live_time,
                          std::map<std::string, float>* _norms,
                          std::map<std::string, bool>* _fix,
                          bool run_minos) {
+  Fit::e_range = _e_range;
+  Fit::r_range = _r_range;
+
   // build a complete list of normalizations
   float* norms = new float[this->signals.size()];
   for (size_t i=0; i<this->signals.size(); i++) {
-    if (this->signals[i].histogram->IsA() == TH2F::Class()) {
-      int x1 = this->signals[i].histogram->GetXaxis()->FindBin(r_range.min);
-      int x2 = this->signals[i].histogram->GetXaxis()->FindBin(r_range.max);
-      int y1 = this->signals[i].histogram->GetYaxis()->FindBin(e_range.min);
-      int y2 = this->signals[i].histogram->GetYaxis()->FindBin(e_range.max);
-      double ii = dynamic_cast<TH2F*>(this->signals[i].histogram)->Integral(x1, x2, y1, y2);
-      norms[i] = this->signals[i].rate / (ii / this->signals[i].histogram->Integral());
-    }
-    else {
-      int x1 = this->signals[i].histogram->FindBin(e_range.min);
-      int x2 = this->signals[i].histogram->FindBin(e_range.max);
-      double ii = this->signals[i].histogram->Integral(x1, x2);
-      norms[i] = this->signals[i].rate / (ii / this->signals[i].histogram->Integral());
-    }
+    norms[i] = live_time * this->signals[i].rate;
     if (_norms != nullptr) {
       auto new_norm = _norms->find(this->signals[i].name);
       if (new_norm != _norms->end()) {
-        norms[i] = new_norm->second;
-        this->signals[i].rate = new_norm->second;
+        norms[i] = live_time * new_norm->second;
+        this->signals[i].rate = live_time * new_norm->second;
       }
     }
   }
-
-  // copy new normalizations to gpu
-  this->ll->set_norms(norms, this->signals.size());
+  delete Fit::norms;
+  Fit::norms = norms;
 
   // run fit
   if (VERBOSE) {
@@ -174,52 +150,7 @@ TMinuit* Fit::operator()(Range<float> e_range, Range<float> r_range,
   }
   TStopwatch timer;
   timer.Start();
-/*
-  // float one parameter at a time first
- for (int i=0; i<10; i++) {
-  std::vector<bool> done(this->signals.size(), false);
-  do {
-    // largest floating rate not yet fit
-    size_t idx = 0;
-    float biggest = -1;
-    for (size_t i=0; i<this->signals.size(); i++) {
-      if (this->signals[i].fixed) {
-        done[i] = true;
-        continue;
-      }
-      if (this->signals[i].rate > biggest && !done[i]) {
-        biggest = this->signals[i].rate;
-        idx = i;
-      }
-    }
 
-    // fix all but the parameter with the biggest rate
-    for (size_t i=0; i<this->signals.size(); i++) {
-      if (i != idx) {
-        this->minuit->FixParameter(i);
-      }
-      else {
-        this->minuit->Release(i);
-      }
-    }
-
-    // and conditionally minimize
-    std::cout << "*** min " << this->signals[idx].name << " (" << this->signals[idx].rate << ")" << std::endl;
-    int eflag;
-    minuit->mnexcm("MINIMIZE 40000", 0, 0, eflag);
-
-  //double lfit, edm, errdef;
-  //int nvpar, nparx, icstat;
-  //minuit->mnstat(lfit, edm, errdef, nvpar, nparx, icstat);
-  //std::cout << "Best fit:" << std::endl;
-  //minuit->mnprin(4, lfit);
-
-    done[idx] = true;
-  }
-  while (std::count(done.begin(), done.end(), true) != (int)done.size());
- }
-  assert(false);
-*/
   // set parameters fixed
   int eflag;
   for (size_t i=0; i<this->signals.size(); i++) {
@@ -248,7 +179,7 @@ TMinuit* Fit::operator()(Range<float> e_range, Range<float> r_range,
   }
 
   minuit->mnexcm("SIMPLEX 4000", 0, 0, eflag);
-  minuit->mnexcm("MINIMIZE 4000", 0, 0, eflag);
+  minuit->mnexcm("MIGRAD 4000", 0, 0, eflag);
   if (run_minos) {
     minuit->mnexcm("MINOS", 0, 0, eflag);
   }
@@ -261,14 +192,11 @@ TMinuit* Fit::operator()(Range<float> e_range, Range<float> r_range,
     for (size_t i=0; i<this->signals.size(); i++) {
       double p, err;
       minuit->GetParameter(i, p, err);
-      std::cout << signals[i].name << ": " << p << " * " << norms[i] << std::endl;
+      std::cout << signals[i].name << ": " << p << " * " << norms[i] << " = " << p * norms[i] << std::endl;
       sum += p * norms[i];
     }
     std::cout << "total fit events: " << sum << std::endl;
   }
-
-  delete[] norms;
-  norms = nullptr;
 
   return minuit;
 }

@@ -146,6 +146,7 @@ TH2F* make_fit_e_r_pdf(const std::vector<std::string> filenames,
                        const std::vector<float> x_bin_edges,
                        const std::vector<float> y_bin_edges,
                        const std::string name="pdf") {
+/*
   double* xedges = new double[x_bin_edges.size()];
   for (size_t i=0; i<x_bin_edges.size(); i++) {
     xedges[i] = x_bin_edges[i];
@@ -155,10 +156,10 @@ TH2F* make_fit_e_r_pdf(const std::vector<std::string> filenames,
   for (size_t i=0; i<y_bin_edges.size(); i++) {
     yedges[i] = y_bin_edges[i];
   }
-
-  TH2F* pdf = new TH2F(name.c_str(), name.c_str(),
-                     x_bin_edges.size()-1, xedges,
-                     y_bin_edges.size()-1, yedges);
+*/
+  TH2F* pdf = new TH2F(name.c_str(), name.c_str(), 300, 0, 6000, 500, 0, 5);
+//                     x_bin_edges.size()-1, xedges,
+//                     y_bin_edges.size()-1, yedges);
 
   TChain* t = make_tchain(filenames);
   std::cout << "Events: " << t->GetEntries() << std::endl;
@@ -169,7 +170,7 @@ TH2F* make_fit_e_r_pdf(const std::vector<std::string> filenames,
   t->SetBranchStatus("ev", 1);
   t->SetBranchAddress("ds", &ds);
 
-  for (int i=0; i<t->GetEntries(); i++) {
+  for (long i=0; i<t->GetEntries(); i++) {
     if (i % 1000 == 0) {
         std::cout << i << "/" << t->GetEntries() << " events" << std::endl;
     }
@@ -217,7 +218,7 @@ int main(int argc, char* argv[]) {
   }
 
   std::vector<std::string> filenames;
-  for (int i=2; i<argc-1; i++) {
+  for (long i=2; i<argc-1; i++) {
     filenames.push_back(argv[i]);
   }
 

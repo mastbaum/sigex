@@ -25,34 +25,35 @@ class Fit {
     Fit(const std::vector<Signal>& signals, const Dataset& data);
 
     virtual ~Fit() {
-      delete Fit::ll;
-      Fit::ll = nullptr;
+      delete[] Fit::norms;
+      Fit::norms = nullptr;
 
-      delete this->lut;
+      delete Fit::data;
+      Fit::data = nullptr;
+
       delete this->minuit;
     }
 
     // run the fit, optionally specifying some different starting normalizations
     // and fixed/unfixed status
-    TMinuit* operator()(Range<float> e_range, Range<float> r_range,
+    TMinuit* operator()(Range<float> _e_range, Range<float> _r_range,
+                        float live_time,
                         std::map<std::string, float>* _norms=nullptr,
                         std::map<std::string, bool>* _fix=nullptr,
                         bool run_minos=false);
 
   protected:
-    // construct a P(x) lookup table
-    static float* build_lut(const std::vector<Signal>& signals, const Dataset& data);
-
     // minuit fit function
     static void nll(int& ndim, double* gout, double& result, double* par,
                     int flags);
 
   private:
-    float* lut;  // P(x) lookup table
     TMinuit* minuit;
-    static size_t nevents;  // total event counts in dataset (rows in lut)
-    static GPULL* ll;  // GPU LL interface
+    static TH1* data;
+    static float* norms;
     static std::vector<Signal> signals;
+    static Range<float> e_range;
+    static Range<float> r_range;
 };
 
 #endif  // __FIT_H__

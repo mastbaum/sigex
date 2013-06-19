@@ -9,6 +9,7 @@
 #include <jsoncpp/json/reader.h>
 #include <TFile.h>
 #include <TRandom.h>
+#include <TMath.h>
 #include <TChain.h>
 #include <TNtuple.h>
 #include <TH1.h>
@@ -70,16 +71,11 @@ TNtuple* FakeDataGenerator::make_dataset(bool poisson, std::map<std::string, dou
   double r = 0;
   double e = 0;
   for (auto it=this->pdfs.begin(); it!=this->pdfs.end(); it++) {
-    int nexpected = ((_norms && _norms->find(it->first) != _norms->end()) ? (*_norms)[it->first] : this->default_norms[it->first]);
+    float nexpected = ((_norms && _norms->find(it->first) != _norms->end()) ? (*_norms)[it->first] : this->default_norms[it->first]);
 
+    // shortcut: generate only events passing cuts
     if (it->second->IsA() == TH2F::Class()) {
       TH2F* ht = dynamic_cast<TH2F*>(it->second);
-      //int x1 = it->second->GetXaxis()->FindBin(r_range.min);
-      //int x2 = it->second->GetXaxis()->FindBin(r_range.max);
-      //int y1 = it->second->GetYaxis()->FindBin(e_range.min);
-      //int y2 = it->second->GetYaxis()->FindBin(e_range.max);
-      //double integral = ht->Integral(x1, x2, y1, y2);
-      //nexpected *= integral;
       int nobserved = nexpected;
       if (poisson && nexpected > 0) {
         nobserved = gRandom->Poisson(nexpected);
@@ -91,15 +87,11 @@ TNtuple* FakeDataGenerator::make_dataset(bool poisson, std::map<std::string, dou
         nt->Fill(r, e);
       }
       if (VERBOSE) {
-        std::cout << "FakeDataGenerator::make_dataset: " << it->first << ": " << nobserved << " events" << std::endl;
+        std::cout << "FakeDataGenerator::make_dataset: " << it->first << ": " << nobserved << " events (" << nexpected << " expected)" << std::endl;
       }
     }
     else if (it->second->IsA() == TH1D::Class()) {
       TH1D* ht = dynamic_cast<TH1D*>(it->second);
-      //int x1 = it->second->GetXaxis()->FindBin(e_range.min);
-      //int x2 = it->second->GetXaxis()->FindBin(e_range.max);
-      //double integral = ht->Integral(x1, x2);
-      //nexpected *= integral;
       int nobserved = nexpected;
       if (poisson && nexpected > 0) {
         nobserved = gRandom->Poisson(nexpected);
@@ -111,7 +103,7 @@ TNtuple* FakeDataGenerator::make_dataset(bool poisson, std::map<std::string, dou
         nt->Fill(r, e);
       }
       if (VERBOSE) {
-        std::cout << "FakeDataGenerator::make_dataset: " << it->first << ": " << nobserved << " events" << std::endl;
+        std::cout << "FakeDataGenerator::make_dataset: " << it->first << ": " << nobserved << " events (" << nexpected << " expected)" << std::endl;
       }
     }
     else {
@@ -197,7 +189,7 @@ FitConfig::FitConfig(std::string const filename) {
     s.constraint = signal_params.get("constraint", 0).asFloat();
 
     assert(signal_params.isMember("rate"));
-    s.rate = signal_params["rate"].asFloat() * this->live_time;  // fixme is event expectation value not rate
+    s.rate = signal_params["rate"].asFloat(); // * this->live_time;  // fixme is event expectation value not rate
 
     assert(signal_params.isMember("filename"));
     std::string filename = signal_params["filename"].asString();
@@ -208,22 +200,25 @@ FitConfig::FitConfig(std::string const filename) {
 
     if (this->mode == FitMode::ENERGY) {
       s.histogram = dynamic_cast<TH1*>(project1d(h2d, &r_range));
-      int x1 = s.histogram->GetXaxis()->FindBin(this->e_range.min);
-      int x2 = s.histogram->GetXaxis()->FindBin(this->e_range.max);
+      std::cout << s.name << ": " <<  s.histogram->Integral() << " // " <<  h2d->Integral() << std::endl;
+      s.rate *= (s.histogram->Integral() / h2d->Integral());
+      int x1 = s.histogram->GetXaxis()->FindBin(e_range.min);
+      int x2 = s.histogram->GetXaxis()->FindBin(e_range.max);
       double integral = s.histogram->Integral(x1, x2);
-      std::cout << s.name << ": "  << integral << " " << s.histogram->Integral() << std::endl;
-      s.rate *= integral / h2d->Integral();
+      s.nexpected = s.rate * this->live_time * integral / s.histogram->Integral();
       s.histogram->Rebin(4);
     }
     else if (this->mode == FitMode::ENERGY_RADIUS) {
       s.histogram = dynamic_cast<TH1*>(h2d);
-      int x1 = h2d->GetXaxis()->FindBin(r_range.min);
-      int x2 = h2d->GetXaxis()->FindBin(r_range.max);
-      int y1 = h2d->GetYaxis()->FindBin(e_range.min);
-      int y2 = h2d->GetYaxis()->FindBin(e_range.max);
-      double integral = h2d->Integral(x1, x2, y1, y2);
-      s.rate *= integral / h2d->Integral();
       dynamic_cast<TH2F*>(s.histogram)->RebinY(4);
+      TH2F* htemp = (TH2F*) s.histogram->Clone("htemp");
+      //int x1 = htemp->GetXaxis()->FindBin(r_range.min);
+      //int x2 = htemp->GetXaxis()->FindBin(r_range.max);
+      int y1 = htemp->GetYaxis()->FindBin(e_range.min);
+      int y2 = htemp->GetYaxis()->FindBin(e_range.max);
+      double integral = htemp->Integral(0, htemp->GetNbinsX(), y1, y2);
+      s.nexpected = s.rate * this->live_time * integral / htemp->Integral() * TMath::Power(e_range.max/6005, 3);
+//      std::cout << "## " << s.name << ": " << s.rate << " * " << this->live_time << " * " << integral << " / " << h2d->Integral() << " -> " << s.nexpected << std::endl;
     }
     else {
       std::cerr << "Unknown fit mode " << static_cast<int>(this->mode) << std::endl;
@@ -241,7 +236,7 @@ TH2F* FitConfig::load_histogram(std::string const filename, std::string const ob
   assert(!f.IsZombie());
   TH2F* h = dynamic_cast<TH2F*>(f.Get(objname.c_str()));
   h->SetDirectory(0);
-  h->Sumw2();
+  //h->Sumw2();
   return h;
 }
 

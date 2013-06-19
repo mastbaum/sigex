@@ -23,7 +23,7 @@
 #endif
 
 // run an experiment, get an upper limit
-float get_ul(std::vector<Signal> _signals, std::string signal_name,
+float get_ul(std::vector<Signal> _signals, std::string signal_name, float live_time,
              float confidence, FakeDataGenerator& gen, unsigned nmc, TH2F* hr,
              Range<float> e_range, Range<float> r_range) {
   std::vector<Signal> signals = _signals;
@@ -35,7 +35,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
 
   // best fit
   Fit* fit = new Fit(signals, data);
-  TMinuit* minuit = (*fit)(e_range, r_range);
+  TMinuit* minuit = (*fit)(e_range, r_range, live_time);
   double lfit, edm, errdef;
   int nvpar, nparx, icstat;
   minuit->mnstat(lfit, edm, errdef, nvpar, nparx, icstat);
@@ -60,7 +60,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
     std::map<std::string, float> n = {{signal_name, ns}};
     std::map<std::string, bool> f = {{signal_name, true}};
     std::cout << "NS = " << ns << std::endl;
-    minuit = (*fit)(e_range, r_range, &n, &f);
+    minuit = (*fit)(e_range, r_range, live_time, &n, &f);
     double lfix;
     minuit->mnstat(lfix, edm, errdef, nvpar, nparx, icstat);
     if (VERBOSE) {
@@ -102,7 +102,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
 
       // best fit
       Fit* fit = new Fit(signals, fakedata);
-      minuit = (*fit)(e_range, r_range);
+      minuit = (*fit)(e_range, r_range, live_time);
       double lfit_fake;
       minuit->mnstat(lfit_fake, edm, errdef, nvpar, nparx, icstat);
       if (VERBOSE) {
@@ -113,7 +113,7 @@ float get_ul(std::vector<Signal> _signals, std::string signal_name,
       // conditional best fit
       n = {{signal_name, ns}};
       f = {{signal_name, true}};
-      minuit = (*fit)(e_range, r_range, &n, &f);
+      minuit = (*fit)(e_range, r_range, live_time, &n, &f);
       double lfix_fake;
       minuit->mnstat(lfix_fake, edm, errdef, nvpar, nparx, icstat);
       if (VERBOSE) {
@@ -181,12 +181,12 @@ int main(int argc, char* argv[]) {
 
   // find sensitivity limit
   TH2F hr("hr", "hr", 50, 0, 50, 10000, 150, 250);
-  FakeDataGenerator gen(fc.signals, fc.e_range, fc.r_range);
+  FakeDataGenerator gen(fc.signals, fc.live_time, fc.e_range, fc.r_range);
   std::vector<double> rs;
   const unsigned nmc = fc.mc_trials;
   const unsigned nfake = fc.fake_experiments;
   for (unsigned i=0; i<nmc; i++) {
-    float ul = get_ul(fc.signals, fc.signal_name, fc.confidence, gen, nfake,
+    float ul = get_ul(fc.signals, fc.signal_name, fc.live_time, fc.confidence, gen, nfake,
                       &hr, fc.e_range, fc.r_range);
     rs.push_back(ul);
     std::cout << "Experiment " << i << ": UL N=" << ul << std::endl

@@ -14,6 +14,7 @@
 #include <TStyle.h>
 #include <TFile.h>
 #include <TMath.h>
+#include <TGraph.h>
 #include <TLegend.h>
 #include <TRandom.h>
 #include <TMinuit.h>
@@ -30,39 +31,46 @@
 
 // run an "experiment:" generate a dataset sampled from histograms and do an
 // unbinned ML fit. returns the fit object if successful.
-Fit* run_experiment(std::vector<Signal> signals, std::string signal_name,
+Fit* run_experiment(std::vector<Signal> signals, std::string signal_name, float live_time,
                     Range<float> e_range, Range<float> r_range,
                     double& norm, double& err) {
   // make a dataset with zero signal
-  FakeDataGenerator gen(signals, e_range, r_range);
+  FakeDataGenerator gen(signals, live_time, e_range, r_range);
   std::map<std::string, double> mnorm = {{ signal_name, 0 }};
-  TNtuple* nt = gen.make_dataset(true, &mnorm);
+  TNtuple* nt = gen.make_dataset(false, &mnorm);
   Dataset data("data", nt);
 
   // best fit
   Fit* fit = new Fit(signals, data);
-  const TMinuit* minuit = (*fit)(e_range, r_range, nullptr, nullptr, true);  // compute minos errors
+  TMinuit* minuit = (*fit)(e_range, r_range, live_time, nullptr, nullptr, true);  // compute minos errors
 
   double lfit, edm, errdef;
   int nvpar, nparx, icstat;
-  const_cast<TMinuit*>(minuit)->mnstat(lfit, edm, errdef, nvpar, nparx, icstat);
+  minuit->mnstat(lfit, edm, errdef, nvpar, nparx, icstat);
   std::cout << "Best fit:" << std::endl;
-  const_cast<TMinuit*>(minuit)->mnprin(4, lfit);
+  minuit->mnprin(4, lfit);
 
   int eflag;
-  const_cast<TMinuit*>(minuit)->mnexcm("SHOW COR", static_cast<double*>(nullptr), 0, eflag);
+  minuit->mnexcm("SHOW COR", static_cast<double*>(nullptr), 0, eflag);
 
   double eplus, eminus, eparabolic, globcc;
   for (size_t i=0; i<signals.size(); i++) {
     if (signals[i].name == signal_name) {
       double signal_par = 0;
       minuit->GetParameter(i, signal_par, eparabolic);
-      norm = signal_par * signals[i].rate;
-      const_cast<TMinuit*>(minuit)->mnerrs(i, eplus, eminus, eparabolic, globcc);
-      err = eplus * signals[i].rate;
+      norm = signal_par * signals[i].nexpected;
+      minuit->mnerrs(i, eplus, eminus, eparabolic, globcc);
+      err = eplus * signals[i].nexpected;
       break;
     }
   }
+
+  //double* args = new double[4];
+  //args[0] = 1;
+  //args[1] = 9;
+  //args[2] = 1.645;
+  //args[3] = 50;
+  //minuit->mnexcm("CONTOUR", args, 4, eflag);
 
   if (std::string(minuit->fCstatu) == "SUCCESSFUL") {
     return fit;
@@ -114,7 +122,7 @@ int main(int argc, char* argv[]) {
     std::cout << "=== EXPERIMENT " << i << " ===" << std::endl;
     double norm = 0;
     double err = 0;
-    Fit* fit = run_experiment(fc.signals, fc.signal_name, fc.e_range, fc.r_range, norm, err);
+    Fit* fit = run_experiment(fc.signals, fc.signal_name, fc.live_time, fc.e_range, fc.r_range, norm, err);
     if (fit != static_cast<Fit*>(nullptr)) {
       std::cout << " Best fit: " << norm << ", positive error " << err << std::endl;
 
@@ -184,7 +192,6 @@ int main(int argc, char* argv[]) {
     TH1F* he = nullptr;
     TH1F* hr = nullptr;
     TH1* ht = fc.signals[i].histogram;
-    double integral = -1;
     if (ht->IsA() == TH2F::Class()) {
       TH2F* h2 = (TH2F*)(ht);
       int first_bin = h2->GetXaxis()->FindBin(fc.r_range.min);
@@ -200,25 +207,17 @@ int main(int argc, char* argv[]) {
       TH1F temp3;
       temp2->Copy(temp3);
       hr = new TH1F(temp3);
-
-      int x1 = h2->GetXaxis()->FindBin(fc.r_range.min);
-      int x2 = h2->GetXaxis()->FindBin(fc.r_range.max);
-      int y1 = h2->GetYaxis()->FindBin(fc.e_range.min);
-      int y2 = h2->GetYaxis()->FindBin(fc.e_range.max);
-      integral = h2->Integral(x1, x2, y1, y2);
     }
     else {
       he = (TH1F*)(ht);
-      int x1 = he->FindBin(fc.e_range.min);
-      int x2 = he->FindBin(fc.e_range.max);
-      integral = he->Integral(x1, x2);
     }
 
-    double p = (fc.signals[i].name == fc.signal_name ? meds : fc.signals[i].rate);
-    std::cout << fc.signals[i].name << ": " << p << " " << integral << " " << he->Integral() << std::endl;
-    he->Scale(p/integral);
+    double p = (fc.signals[i].name == fc.signal_name ? meds : fc.signals[i].nexpected);
+//    std::cout << fc.signals[i].name << ": " << p << " " << integral << " " << he->Integral() << std::endl;
+    std::cout << ">>> " << fc.signals[i].name << " " << p << " " << he->Integral() << std::endl;
+    he->Scale(p/he->Integral());
     if (hr) {
-      hr->Scale(p/integral);
+      hr->Scale(p/hr->Integral());
     }
 
     if (hesum == nullptr) {
@@ -263,13 +262,13 @@ int main(int argc, char* argv[]) {
 
     if (hr) {
       hr->GetXaxis()->SetRangeUser(fc.r_range.min, fc.r_range.max);
-      hr->SetAxisRange(5e-2, 1e5, "Y"); //1e-4, 5, "Y");
+      hr->SetAxisRange(5e-2, 1e3, "Y"); //1e-4, 5, "Y");
       hr->SetLineColor(colors[i%colors.size()]);
       hr->SetLineWidth(2);
     }
 
     he->GetXaxis()->SetRangeUser(2, 3.2);
-    he->SetAxisRange(1e-1, 5e3, "Y");
+    he->SetAxisRange(1e-2, 5e2, "Y");
     char cl[100];
     snprintf(cl, 100, "%1.2f%% CL #hat{S} = %1.2f (%i experiments, %1.0f y)",
              fc.confidence*100, meds, fc.mc_trials, fc.live_time);
@@ -279,24 +278,33 @@ int main(int argc, char* argv[]) {
     stan.AddEntry(he, fc.signals[i].title.c_str());
 
     ce.cd();
-    he->Draw(i==0 ? "" : "same");
+    he->Draw(i==0 ? "hist" : "hist same");
 
     if (hr) {
       cr.cd();
-      hr->Draw(i==0 ? "" : "same");
+      hr->Draw(i==0 ? "hist" : "hist same");
     }
   }
 
   ce.cd();
-  hesum->Draw("same");
-  hesum_ns->Draw("same");
+  hesum->Draw("hist same");
+  hesum_ns->Draw("hist same");
+
+  FakeDataGenerator gen(fc.signals, fc.live_time, fc.e_range, fc.r_range);
+  std::map<std::string, double> mnorm = {{ fc.signal_name, 0 }};
+  TNtuple* nt = gen.make_dataset(false, &mnorm);
+  TH1F* hfd = (TH1F*) hesum->Clone("hfd");
+  hfd->Reset();
+  hfd->SetMarkerStyle(20);
+  nt->Draw("e>>hfd","","same");
+
   stan.Draw();
   ce.SaveAs((fc.output_file + "_e.pdf").c_str());
 
   if (hrsum) {
     cr.cd();
-    hrsum->Draw("same");
-    hrsum_ns->Draw("same");
+    hrsum->Draw("hist same");
+    hrsum_ns->Draw("hist same");
     stan.Draw();
     cr.SaveAs((fc.output_file + "_r.pdf").c_str());
   }

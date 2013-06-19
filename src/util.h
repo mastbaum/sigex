@@ -40,6 +40,7 @@ struct Signal {
   std::string name;
   std::string title;  // histogram title in ROOT-LaTeX format
   float rate;  // expected events per year
+  float nexpected;  // events expected in this fit
   float constraint;  // fractional uncertainty
   bool fixed;  // float normalization?
   int ndim;  // number of dimensions in histogram
@@ -96,11 +97,11 @@ class Dataset {
 // create fake datasets by sampling histograms
 class FakeDataGenerator {
   public:
-    FakeDataGenerator(std::vector<Signal> signals, Range<float> _e_range, Range<float> _r_range)
-      : e_range(_e_range), r_range(_r_range) {
+    FakeDataGenerator(std::vector<Signal> signals, float _live_time, Range<float> _e_range, Range<float> _r_range)
+      : live_time(_live_time), e_range(_e_range), r_range(_r_range) {
       for (auto it=signals.cbegin(); it!=signals.cend(); it++) {
         this->pdfs[it->name] = it->histogram;
-        this->default_norms[it->name] = it->rate;
+        this->default_norms[it->name] = it->nexpected;
       }
     }
     virtual ~FakeDataGenerator() {}
@@ -112,6 +113,7 @@ class FakeDataGenerator {
   protected:
     std::map<std::string, TH1*> pdfs;
     std::map<std::string, double> default_norms;
+    float live_time;
     Range<float> e_range;
     Range<float> r_range;
 };
