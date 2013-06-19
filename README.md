@@ -3,6 +3,12 @@ Signal Extraction Fit
 A GPU-accelerated fit program which calculates fully frequentist confidence
 intervals or limits via the profile likelihood construction.
 
+***This code is deprecated!***
+
+**This fitter gives unstable results due to problems with MINUIT fitting a
+parameter near a physical boundary. For a more robust solution, see
+[sxmc](https://github.com/mastbaum/sxmc).**
+
 Building
 --------
 `sigex` requires the following libraries:
